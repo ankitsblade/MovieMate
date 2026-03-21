@@ -9,6 +9,12 @@ wheels/
 # Virtual environments
 .venv
 
+# Next.js frontend
+frontend/node_modules/
+frontend/.next/
+frontend/out/
+frontend/.env.local
+
 *.tsv.gz
 *.csv
 .~lock.imdb_cleaned_for_supabase.csv#
