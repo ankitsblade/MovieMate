@@ -1,10 +1,12 @@
 import re
 
+
 def extract_filters(query: str) -> dict:
     q = query.lower()
 
     filters = {
         "min_year": None,
+        "max_year": None,
         "max_runtime": None,
         "min_rating": None,
         "genre": None,
@@ -13,6 +15,10 @@ def extract_filters(query: str) -> dict:
     after_year = re.search(r"after\s+(\d{4})", q)
     if after_year:
         filters["min_year"] = int(after_year.group(1)) + 1
+
+    before_year = re.search(r"before\s+(\d{4})", q)
+    if before_year:
+        filters["max_year"] = int(before_year.group(1)) - 1
 
     under_minutes = re.search(r"(under|less than)\s+(\d+)\s*(minutes|min)?", q)
     if under_minutes:
@@ -29,7 +35,7 @@ def extract_filters(query: str) -> dict:
     common_genres = [
         "action", "comedy", "drama", "thriller", "romance",
         "sci-fi", "science fiction", "horror", "crime",
-        "adventure", "animation", "fantasy", "mystery"
+        "adventure", "animation", "fantasy", "mystery", "western"
     ]
 
     for genre in common_genres:

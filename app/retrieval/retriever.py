@@ -1,21 +1,34 @@
-from app.db import get_connection
+import psycopg
+from langsmith import traceable
+from app.config import SUPABASE_DB_URL
 
+
+def get_connection():
+    return psycopg.connect(SUPABASE_DB_URL)
+
+
+@traceable(run_type="retriever", name="supabase_vector_search")
 def search_movies(
-    query_embedding,
-    top_k=8,
-    min_year=None,
-    max_runtime=None,
-    min_rating=None,
-    genre=None,
-):
+    query_embedding: list[float],
+    top_k: int = 30,
+    min_year: int | None = None,
+    max_year: int | None = None,
+    max_runtime: int | None = None,
+    min_rating: float | None = None,
+    genre: str | None = None,
+) -> list[dict]:
     emb_str = "[" + ",".join(map(str, query_embedding)) + "]"
 
-    conditions = ["coalesce(is_adult, false) = false"]
-    params = []
+    conditions = ["coalesce(is_adult, false) = false", "embedding is not null"]
+    params: list = []
 
     if min_year is not None:
         conditions.append("start_year >= %s")
         params.append(min_year)
+
+    if max_year is not None:
+        conditions.append("start_year <= %s")
+        params.append(max_year)
 
     if max_runtime is not None:
         conditions.append("runtime_minutes <= %s")
@@ -71,7 +84,7 @@ def search_movies(
             "num_votes": row[8],
             "people_summary": row[9],
             "content": row[10],
-            "distance": row[11],
+            "distance": float(row[11]) if row[11] is not None else None,
         }
         for row in rows
     ]

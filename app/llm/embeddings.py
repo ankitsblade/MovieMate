@@ -1,4 +1,5 @@
 from openai import OpenAI
+from langsmith.wrappers import wrap_openai
 from app.config import (
     NVIDIA_API_KEY,
     NVIDIA_BASE_URL,
@@ -6,25 +7,17 @@ from app.config import (
     EMBED_DIMENSIONS,
 )
 
-client = OpenAI(
+raw_client = OpenAI(
     api_key=NVIDIA_API_KEY,
     base_url=NVIDIA_BASE_URL,
 )
 
+client = wrap_openai(raw_client)
+
+
 def _clean(text: str) -> str:
     return text.replace("\n", " ").strip()
 
-def get_passage_embedding(text: str) -> list[float]:
-    response = client.embeddings.create(
-        model=NVIDIA_EMBED_MODEL,
-        input=[_clean(text)],
-        encoding_format="float",
-        extra_body={
-            "input_type": "passage",
-            "dimensions": EMBED_DIMENSIONS,
-        },
-    )
-    return response.data[0].embedding
 
 def get_query_embedding(text: str) -> list[float]:
     response = client.embeddings.create(
@@ -33,6 +26,19 @@ def get_query_embedding(text: str) -> list[float]:
         encoding_format="float",
         extra_body={
             "input_type": "query",
+            "dimensions": EMBED_DIMENSIONS,
+        },
+    )
+    return response.data[0].embedding
+
+
+def get_passage_embedding(text: str) -> list[float]:
+    response = client.embeddings.create(
+        model=NVIDIA_EMBED_MODEL,
+        input=[_clean(text)],
+        encoding_format="float",
+        extra_body={
+            "input_type": "passage",
             "dimensions": EMBED_DIMENSIONS,
         },
     )
