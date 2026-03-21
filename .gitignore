@@ -9,4 +9,6 @@ wheels/
 # Virtual environments
 .venv
 
-Data/
+*.tsv.gz
+*.csv
+.~lock.imdb_cleaned_for_supabase.csv#

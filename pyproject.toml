@@ -9,5 +9,7 @@ dependencies = [
     "langchain",
     "matplotlib>=3.10.8",
     "pandas>=3.0.1",
+    "pgvector>=0.4.2",
+    "python-dotenv>=1.2.2",
     "seaborn>=0.13.2",
 ]
