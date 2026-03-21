@@ -1,12 +1,20 @@
 from typing import Literal
 from pydantic import BaseModel
 from langsmith import traceable
+
 from app.llm.chat_model import llm
 from app.llm.prompts import ROUTER_PROMPT
 
 
 class RouteDecision(BaseModel):
-    intent: Literal["greeting", "small_talk", "movie_query", "followup", "clarify"]
+    intent: Literal[
+        "greeting",
+        "small_talk",
+        "movie_query",
+        "followup",
+        "memory_lookup",
+        "clarify",
+    ]
 
 
 router_llm = llm.with_structured_output(RouteDecision)

@@ -59,6 +59,9 @@ ANSWER_PROMPT = """
 Conversation history:
 {history}
 
+Relevant memory context:
+{memory_context}
+
 User message:
 {user_message}
 
@@ -67,8 +70,36 @@ Retrieved movie context:
 
 Instructions:
 - Answer naturally and concisely.
-- Use only the retrieved context for movie facts.
-- Ignore loosely related retrieved items if they do not genuinely help.
-- If the context is weak, say so clearly.
-- If recommending multiple movies, keep each reason brief but specific.
+- Use retrieved movie context for movie facts.
+- Use memory context for user-specific preferences or prior-conversation references.
+- If both are available, combine them naturally.
+- If memory context is empty, ignore it.
+- If retrieved movie context is empty, do not invent movie facts.
+- Do not hallucinate anything not supported by the provided context.
+"""
+
+ROUTER_PROMPT = """
+Classify the user's latest message into exactly one of these intents:
+
+- greeting
+- small_talk
+- movie_query
+- followup
+- memory_lookup
+- clarify
+
+Definitions:
+- greeting: hi, hello, hey, greetings
+- small_talk: thanks, okay, cool, bye, nice
+- movie_query: asks for movie recommendations, comparisons, similar movies, genres, actors, directors, or movie information
+- followup: short refinement of an ongoing movie discussion, such as "newer ones", "shorter", "darker", "after 2015"
+- memory_lookup: asks what was said earlier, whether you remember something from the conversation, what the user's name is, or what you know from prior turns
+- clarify: too vague or too short to answer meaningfully
+
+Important:
+- If the user is asking about something said earlier in the conversation, choose memory_lookup.
+- Do not classify conversational memory questions as clarify.
+- Only choose followup when the message is refining a movie-related discussion.
+
+Return only the structured intent.
 """
