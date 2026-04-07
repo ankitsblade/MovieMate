@@ -7,9 +7,9 @@
 #set par(justify: true)
 
 #let project-title = "MovieMate: Exploring Conversational AI for Intelligent Movie Search and Recommendation"
-#let course-name = "NLP Course Assignment"
-#let authors = "Fill in team members here"
-#let institution = "Fill in department / university here"
+#let course-name ="CS3126 NLP"
+#let authors = "Saiankit Shankar"
+#let institution = "Mahindra University"
 
 #align(center)[
   #text(18pt, weight: "bold")[#project-title]
@@ -38,9 +38,9 @@ Traditional movie-search interfaces are effective when users know exactly what t
 - "What movies feature Ana de Armas?"
 - "Give me darker thrillers than the last list"
 
-The assignment brief emphasizes conversational movie search, retrieval, preprocessing, evaluation, and architectural understanding. We therefore framed the project as an NLP system design problem: how do we convert natural language into reliable retrieval operations while preserving conversational flexibility and minimizing hallucination?
+The assignment brief emphasizes conversational movie search, retrieval, preprocessing, evaluation, and architectural understanding. I therefore framed the project as an NLP system design problem: how do I convert natural language into reliable retrieval operations while preserving conversational flexibility and minimizing hallucination?
 
-Our final answer was a retrieval-augmented architecture rather than an end-to-end generative system. The reasons were practical and methodological:
+My final answer was a retrieval-augmented architecture rather than an end-to-end generative system. The reasons were practical and methodological:
 
 - movie titles, cast, runtime, and years are factual fields and should come from a curated source rather than be invented by the model
 - user queries often contain hard constraints, such as actor name or runtime limit, which are better enforced with structured retrieval than with free-form generation
@@ -48,9 +48,9 @@ Our final answer was a retrieval-augmented architecture rather than an end-to-en
 
 = 2. Dataset Acquisition And Construction
 
-== 2.1 Why We Chose Official IMDb Data
+== 2.1 Why I Chose Official IMDb Data
 
-The project brief explicitly encouraged students to explore scraping, APIs, or existing open datasets. We considered these categories conceptually, but chose the official IMDb public datasets as the primary source.
+The project brief explicitly encouraged students to explore scraping, APIs, or existing open datasets. I considered these categories conceptually, but chose the official IMDb public datasets as the primary source.
 
 This choice was motivated by several factors:
 
@@ -87,7 +87,38 @@ The top-10k subset was kept as a practical experimental dataset. It has:
 
 This smaller subset is useful when reproducing the system quickly or when running lower-cost experiments.
 
-== 2.3 Preprocessing Pipeline
+== 2.3 Exploratory Data Analysis
+
+Before building the retrieval system, I performed a lightweight exploratory analysis of the cleaned IMDb corpus to understand whether the resulting dataset had enough coverage and structure for conversational search. The plots below were generated from the cleaned full corpus of 1,305,051 movies.
+
+#figure(
+  image("assets/imdb_rating_distribution.png", width: 76%),
+  caption: [Distribution of IMDb ratings in the cleaned corpus.],
+)
+
+Figure 2 shows that the rating distribution is concentrated in the middle of the scale rather than at the extremes. This is useful for the retrieval setup because it suggests that a rating filter such as "highly rated" should not simply mean "anything above zero," but should be interpreted relative to a fairly compact rating band centered around the low-to-mid sixes.
+
+#figure(
+  image("assets/imdb_top_genres.png", width: 78%),
+  caption: [Most frequent genres in the cleaned IMDb corpus.],
+)
+
+Figure 3 shows that the corpus is dominated by Drama and Documentary, followed by Comedy, Action, and Romance. This imbalance matters for retrieval: a purely semantic retriever can drift toward dominant genres unless genre filters are extracted and enforced explicitly. This observation directly supports the design choice of structured query parsing plus deterministic filtering in the retrieval stage.
+
+#figure(
+  image("assets/imdb_rating_by_year.png", width: 76%),
+  caption: [Average IMDb rating by release year for years with at least 100 titles in the cleaned corpus.],
+)
+
+Figure 4 shows that average ratings are relatively stable over time rather than wildly fluctuating. In the filtered yearly analysis, the average rating stays in a fairly narrow band of roughly 6.13 to 6.70 between 1950 and 2025. This suggests that release year is a useful retrieval constraint, but not a strong proxy for quality on its own.
+
+These EDA results informed three design choices in the final system:
+
+- metadata fields such as genre, year, runtime, and people were preserved as first-class retrieval filters
+- rating was treated as a structured preference signal rather than the sole ranking criterion
+- the cleaned corpus was large and diverse enough to justify dense retrieval instead of a tiny hand-curated catalog
+
+== 2.4 Preprocessing Pipeline
 
 The preprocessing logic is implemented in `Data/dataprep.py` and the ingestion logic in `Data/ingest.py`.
 
@@ -110,37 +141,30 @@ The ingestion stage then:
 - creates the `movies` table if needed
 - stores metadata plus embeddings in PostgreSQL / Supabase
 
+#pagebreak()
 = 3. System Architecture
 
-The final system can be viewed as the following pipeline:
+The final implementation is best understood through the actual LangGraph workflow rather than a simplified linear pipeline. Figure 1 shows the graph used in the backend.
 
-User Query
+#figure(
+  image("../moviemate_graph.png", width: 78%),
+  caption: [MovieMate LangGraph workflow used in the final backend implementation.],
+)
 
--> Intent Routing
+The graph begins at a router node that classifies the turn into one of four broad paths:
 
--> Memory Retrieval
+- greeting
+- small talk
+- clarification
+- retrieval-oriented conversation
 
--> Query Rewrite
+If the turn is conversational, the graph exits early through a lightweight response branch. If the turn is ambiguous, it is routed to a clarification node that asks for the missing detail. The main retrieval branch is more involved: it first gathers relevant memory context, then rewrites the query when follow-up resolution is required, then performs retrieval, reranking, answer generation, answer evaluation, and finally either retries or finalizes the answer.
 
--> Structured Retrieval Parsing
+This graph structure matters because the system is not just "query in, response out." It is a controlled conversational workflow with conditional branching, persistent state, and quality-control loops. The evaluation and retry cycle visible in the figure became especially important once I began treating groundedness and retrieval quality as first-class system objectives rather than post-hoc diagnostics.
 
--> Query Embedding
+== 3.1 Why I Used LangGraph
 
--> Vector Retrieval + Hard Filtering
-
--> Reranking
-
--> Answer Generation
-
--> Evaluation
-
--> Retry on Weak Response
-
--> Final Response
-
-== 3.1 Why We Used LangGraph
-
-We chose LangGraph because the system is inherently stateful and branchy. A single prompt chain would have been difficult to debug and extend once the project included:
+I chose LangGraph because the system is inherently stateful and branchy. A single prompt chain would have been difficult to debug and extend once the project included:
 
 - greetings and small talk
 - clarification turns
@@ -149,11 +173,11 @@ We chose LangGraph because the system is inherently stateful and branchy. A sing
 - retrieval branches
 - answer regeneration when evaluation is weak
 
-LangGraph gave us an explicit node-and-edge representation of the conversation workflow. This was a good match for the assignment because it let us reason about each stage separately instead of hiding the entire system inside one monolithic prompt.
+LangGraph gave me an explicit node-and-edge representation of the conversation workflow shown in Figure 1. This was a good match for the assignment because it let me reason about each stage separately instead of hiding the entire system inside one monolithic prompt.
 
-The graph also allowed us to checkpoint session history via PostgreSQL, which gave us persistent multi-turn state across requests.
+The graph also allowed me to checkpoint session history via PostgreSQL, which gave me persistent multi-turn state across requests.
 
-== 3.2 Why We Used LangSmith
+== 3.2 Why I Used LangSmith
 
 LangSmith was not necessary to make the chatbot "work," but it was extremely useful during development. Retrieval systems often fail for different reasons:
 
@@ -173,7 +197,7 @@ Each request is associated with a `session_id`, and LangGraph stores the evolvin
 - "shorter"
 - "something darker"
 
-Memory is used selectively rather than injected into every query. This became an important design choice because overusing raw conversation history increased hallucination risk. We therefore limited memory use to:
+Memory is used selectively rather than injected into every query. This became an important design choice because overusing raw conversation history increased hallucination risk. I therefore limited memory use to:
 
 - follow-up refinement turns
 - explicit memory lookups
@@ -185,7 +209,7 @@ Memory is used selectively rather than injected into every query. This became an
 
 Earlier versions of the system relied heavily on heuristics for routing and filter extraction. This worked for many common cases, but it became brittle when queries were phrased naturally or when multiple constraints appeared together.
 
-We therefore shifted to an LLM-first design:
+I therefore shifted to an LLM-first design:
 
 - routing is now LLM-first with heuristic fallback
 - retrieval filter extraction is now LLM-first with heuristic fallback
@@ -201,7 +225,7 @@ The structured retrieval parser extracts:
 - max runtime
 - minimum rating
 
-This allows us to combine flexible interpretation with reliable downstream filtering.
+This allows me to combine flexible interpretation with reliable downstream filtering.
 
 == 4.2 Why Retrieval Is Not Purely LLM-Based
 
@@ -227,7 +251,7 @@ This hybrid retrieval design proved much more reliable than free-form title gene
 
 One of the most difficult failure modes involved person-name queries, especially ambiguous names such as `Ana`, or full names that were partially lost during rewriting.
 
-We found that person queries require stricter handling than generic semantic retrieval. The main fixes were:
+I found that person queries require stricter handling than generic semantic retrieval. The main fixes were:
 
 - preserving person constraints from the original user message even if a rewrite drops them
 - using strict person-name validation rather than loose substring matching
@@ -237,7 +261,7 @@ This is a good example of why a "less heuristics, more LLM" philosophy still nee
 
 == 4.4 Response Generation
 
-The answer generator uses retrieved movie context as the source of truth. We explicitly restrict title mentions to titles that appear in the retrieved set.
+The answer generator uses retrieved movie context as the source of truth. I explicitly restrict title mentions to titles that appear in the retrieved set.
 
 An important design change was making card-mode summaries deterministic. Earlier, the answer model produced both text and cards, which caused duplicated lists and sometimes hallucinated titles in the prose. The final design instead uses:
 
@@ -252,20 +276,20 @@ The assignment calls for reflection and performance analysis. In this project, e
 
 == 5.1 Hybrid Evaluation Design
 
-We used a hybrid evaluation framework with three layers.
+I used a hybrid evaluation framework with three layers.
 
-First, we used algorithmic retrieval checks:
+First, I used algorithmic retrieval checks:
 
 - filter alignment: whether returned movies satisfy extracted constraints such as actor, genre, runtime, or year
 - lexical query overlap: whether retrieved evidence overlaps meaningfully with the query terms
 
-Second, we used response consistency checks:
+Second, I used response consistency checks:
 
 - whether the answer is complete rather than cut off
 - whether explicit counts in the answer match the retrieved set
 - whether card-mode text avoids repeating movie titles unnecessarily
 
-Third, we used an LLM judge that scores:
+Third, I used an LLM judge that scores:
 
 - retrieval relevance
 - evidence alignment
@@ -275,21 +299,21 @@ Third, we used an LLM judge that scores:
 
 == 5.2 Why Pure LLM Evaluation Was Not Enough
 
-We originally experimented with more judge-heavy evaluation, but the judge itself sometimes hallucinated. A representative failure case was when the judge saw only a small sample of retrieved evidence and incorrectly concluded that the answer was unsupported, even though the frontend showed more cards.
+I originally experimented with more judge-heavy evaluation, but the judge itself sometimes hallucinated. A representative failure case was when the judge saw only a small sample of retrieved evidence and incorrectly concluded that the answer was unsupported, even though the frontend showed more cards.
 
 This led to two important insights:
 
 - evaluation models can hallucinate too
 - an LLM judge should not be trusted without a carefully designed evidence payload
 
-We corrected this by giving the judge:
+I corrected this by giving the judge:
 
 - the retrieved result count
 - the retrieved title list
 - aggregated runtime and year ranges
 - compact evidence summaries
 
-We also kept deterministic checks in the evaluation loop. This gave us a more trustworthy hybrid evaluator than either heuristics alone or LLM judgment alone.
+I also kept deterministic checks in the evaluation loop. This gave me a more trustworthy hybrid evaluator than either heuristics alone or LLM judgment alone.
 
 == 5.3 Low-Signal Regeneration
 
@@ -311,7 +335,7 @@ Moving routing and filter extraction to structured LLM calls improved handling o
 
 == 6.3 Deterministic Guards Remain Necessary
 
-Despite the shift toward LLM-first design, purely model-driven behavior was not sufficient in production-like settings. We still needed deterministic safety layers for:
+Despite the shift toward LLM-first design, purely model-driven behavior was not sufficient in production-like settings. I still needed deterministic safety layers for:
 
 - exact person-name validation
 - fallback parsing
@@ -329,7 +353,7 @@ Judge quality improved substantially once the evidence summary better reflected 
 
 == 7.1 Official IMDb Instead Of Scraping Or Kaggle
 
-We chose official IMDb-derived data because it gave us:
+I chose official IMDb-derived data because it gave me:
 
 - standardized identifiers
 - better provenance
@@ -340,7 +364,7 @@ Scraping was rejected because it would add fragility and policy concerns. A gene
 
 == 7.2 Embedding And Reranking Models
 
-We used the NVIDIA embedding and reranking models because they are retrieval-oriented and fit naturally into the retrieval stage:
+I used the NVIDIA embedding and reranking models because they are retrieval-oriented and fit naturally into the retrieval stage:
 
 - the embedding model supports query and passage modes, which is valuable for asymmetric retrieval
 - the reranker adds a second-stage relevance signal that improves the final shortlist
@@ -349,23 +373,23 @@ This choice was preferable to relying on a single generative model for everythin
 
 == 7.3 Main Chat Model
 
-We used `openai/gpt-oss-120b` for routing, structured parsing, answer generation, and judging because it performs well on:
+I used `openai/gpt-oss-120b` for routing, structured parsing, answer generation, and judging because it performs well on:
 
 - instruction following
 - structured output
 - long-form conversational interpretation
 
-The choice was pragmatic: we needed one strong model that could handle both reasoning and structured extraction in a stable way.
+The choice was pragmatic: I needed one strong model that could handle both reasoning and structured extraction in a stable way.
 
 == 7.4 Heuristics As Fallback Rather Than Primary Logic
 
-The project began with more heuristics than we wanted. Over time, we refactored toward LLM-first routing and retrieval parsing. However, we did not remove heuristics entirely. Instead, we reduced them to their strongest use cases:
+The project began with more heuristics than I wanted. Over time, I refactored toward LLM-first routing and retrieval parsing. However, I did not remove heuristics entirely. Instead, I reduced them to their strongest use cases:
 
 - fallback behavior
 - exact validation
 - deterministic guards
 
-This gave us a better balance between flexibility and reliability.
+This gave me a better balance between flexibility and reliability.
 
 = 8. Alignment With Assignment Outcomes
 

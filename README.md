@@ -282,5 +282,6 @@ UV_CACHE_DIR=/tmp/uv-cache uv run python -m unittest discover -s tests
 The assignment-style Typst report lives at:
 
 - [`report/project_report.typ`](/home/ankit/Development/MovieMate/report/project_report.typ)
+- [`report/project_report.pdf`](/home/ankit/Development/MovieMate/report/project_report.pdf)
 
 Compiled Typst artifacts are ignored in Git via `.gitignore`.
