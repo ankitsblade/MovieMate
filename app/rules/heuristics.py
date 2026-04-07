@@ -198,11 +198,14 @@ CARD_SECTION_PATTERN = re.compile(
     r"\n+\s*(?:cards?|movie cards?)\s*:\s*(?:\n\s*(?:[-*]|\d+\.).*)*$",
     re.IGNORECASE,
 )
+BULLET_GLYPH_PATTERN = re.compile(r"^\s*[•●▪◦]\s+", re.MULTILINE)
+ORDERED_PAREN_PATTERN = re.compile(r"^(\s*)(\d+)\)\s+", re.MULTILINE)
 
 SINGLE_NAME_QUERY_PATTERN = re.compile(
     r"\b((?:movies?|films?)\s+(?:with|starring|featuring|by)\s+)([A-Za-z][A-Za-z'-]*)\b(?!\s+[A-Za-z][A-Za-z'-]*)",
     re.IGNORECASE,
 )
+SENTENCE_END_PATTERN = re.compile(r"[.!?][\"')\]]?$")
 
 
 def normalize_message(text: str) -> str:
@@ -309,6 +312,30 @@ def normalize_person_candidate(candidate: str) -> str | None:
     return " ".join(normalized_tokens)
 
 
+def person_name_tokens(person_name: str) -> list[str]:
+    return [
+        token.lower()
+        for token in person_name.split()
+        if token.lower() not in NAME_CONNECTORS and len(token) > 1
+    ]
+
+
+def person_name_matches_text(person_name: str, text: str) -> bool:
+    lowered = str(text or "").lower()
+    if not lowered.strip():
+        return False
+
+    phrase_pattern = r"\b" + r"\s+".join(re.escape(part.lower()) for part in person_name.split()) + r"\b"
+    if re.search(phrase_pattern, lowered):
+        return True
+
+    tokens = person_name_tokens(person_name)
+    if not tokens:
+        return False
+
+    return all(re.search(r"\b" + re.escape(token) + r"\b", lowered) for token in tokens)
+
+
 def extract_person_name(query: str) -> str | None:
     for pattern in PERSON_QUERY_PATTERNS:
         match = re.search(pattern, query, flags=re.IGNORECASE)
@@ -377,10 +404,151 @@ def should_show_movie_cards(user_message: str, intent: str, has_results: bool) -
     if contains_any_phrase(lowered, TEXT_ONLY_PATTERNS):
         return False
 
-    if intent == "followup":
-        return True
+    return True
 
-    return contains_any_phrase(lowered, CARD_TRIGGER_PATTERNS)
+
+def answer_looks_complete(answer: str) -> bool:
+    text = answer.strip()
+    if not text:
+        return False
+
+    lines = [line.strip() for line in text.splitlines() if line.strip()]
+    if not lines:
+        return False
+
+    return bool(SENTENCE_END_PATTERN.search(lines[-1]))
+
+
+def _join_phrases(items: list[str]) -> str:
+    if not items:
+        return ""
+    if len(items) == 1:
+        return items[0]
+    if len(items) == 2:
+        return f"{items[0]} and {items[1]}"
+    return f"{', '.join(items[:-1])}, and {items[-1]}"
+
+
+def _request_style_phrase(user_message: str) -> str | None:
+    lowered = user_message.lower()
+
+    cue_map = (
+        ("feel-good", "that feel-good mood"),
+        ("feel good", "that feel-good mood"),
+        ("comfort", "that comforting vibe"),
+        ("dark", "that darker tone"),
+        ("thriller", "that thriller mood"),
+        ("sci-fi", "that sci-fi lane"),
+        ("science fiction", "that sci-fi lane"),
+        ("funny", "something lighter"),
+        ("comedy", "something lighter"),
+        ("romance", "that romantic mood"),
+        ("war", "that war-drama space"),
+        ("documentary", "that documentary lane"),
+        ("family", "something easy to settle into"),
+        ("action", "that action-heavy lane"),
+    )
+
+    for needle, phrase in cue_map:
+        if needle in lowered:
+            return phrase
+
+    return None
+
+
+def build_card_mode_answer(user_message: str, results: list[dict]) -> str:
+    if not results:
+        return "I couldn't find any strong retrieved matches for that request."
+
+    count = len(results)
+    runtimes = [
+        int(movie["runtime_minutes"])
+        for movie in results
+        if isinstance(movie.get("runtime_minutes"), int)
+    ]
+    years = [
+        int(movie["start_year"])
+        for movie in results
+        if isinstance(movie.get("start_year"), int)
+    ]
+
+    genre_counts: dict[str, int] = {}
+    for movie in results:
+        raw_genres = str(movie.get("genres") or "")
+        for genre in raw_genres.split(","):
+            cleaned = genre.strip()
+            if not cleaned:
+                continue
+            genre_counts[cleaned] = genre_counts.get(cleaned, 0) + 1
+
+    top_genres = [
+        genre
+        for genre, _ in sorted(
+            genre_counts.items(),
+            key=lambda item: (-item[1], item[0].lower()),
+        )[:2]
+    ]
+
+    style_phrase = _request_style_phrase(user_message)
+    if count == 1:
+        lead = "I found one option that looks like a strong fit."
+    elif style_phrase:
+        lead = f"I pulled together a few options that should line up nicely with {style_phrase}."
+    else:
+        lead = "I pulled together a few options that look like a good fit."
+
+    details: list[str] = [f"You’ll find {count} option{'s' if count != 1 else ''} below."]
+
+    if runtimes:
+        min_runtime = min(runtimes)
+        max_runtime = max(runtimes)
+        if min_runtime == max_runtime:
+            details.append(f"They all land around {min_runtime} minutes.")
+        else:
+            details.append(f"They range from {min_runtime} to {max_runtime} minutes.")
+
+    if top_genres:
+        details.append(f"Overall, the mix leans toward {_join_phrases(top_genres)}.")
+
+    if years:
+        min_year = min(years)
+        max_year = max(years)
+        if min_year == max_year:
+            details.append(f"They all come from {min_year}.")
+        else:
+            details.append(f"They span releases from {min_year} to {max_year}.")
+
+    answer = f"{lead}\n\n{' '.join(details)}"
+    return normalize_markdown_answer(answer)
+
+
+def normalize_markdown_answer(answer: str) -> str:
+    cleaned = answer.replace("\r\n", "\n").strip()
+    if not cleaned:
+        return cleaned
+
+    cleaned = BULLET_GLYPH_PATTERN.sub("- ", cleaned)
+    cleaned = ORDERED_PAREN_PATTERN.sub(r"\1\2. ", cleaned)
+    cleaned = re.sub(r"\n{3,}", "\n\n", cleaned)
+
+    normalized_lines: list[str] = []
+    previous_blank = False
+
+    for raw_line in cleaned.split("\n"):
+        line = raw_line.strip()
+        if not line:
+            if normalized_lines and not previous_blank:
+                normalized_lines.append("")
+            previous_blank = True
+            continue
+
+        if line.startswith("#"):
+            line = re.sub(r"^(#{1,6})([^ #])", r"\1 \2", line)
+
+        normalized_lines.append(line)
+        previous_blank = False
+
+    return "\n".join(normalized_lines).strip()
 
 
 def is_preference_statement(text: str) -> bool:
@@ -399,4 +567,4 @@ def sanitize_answer(answer: str, show_movie_cards: bool) -> str:
             flags=re.IGNORECASE,
         )
 
-    return cleaned
+    return normalize_markdown_answer(cleaned)

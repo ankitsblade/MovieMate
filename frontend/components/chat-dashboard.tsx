@@ -1,7 +1,8 @@
 "use client";
 
 import { FormEvent, KeyboardEvent, useEffect, useRef, useState } from "react";
-import { ChatResponse, Message, MovieResult } from "@/lib/types";
+import { ChatResponse, ChatSignal, Message, MovieResult, SignalMetric } from "@/lib/types";
+import type { ReactNode } from "react";
 
 const STORAGE_KEY = "moviemate-ui-state";
 const THEME_KEY = "moviemate-theme";
@@ -36,6 +37,7 @@ const initialAssistantMessage: Message = {
     "Hi, I'm moviemate. Ask for recommendations by mood, genre, actor, runtime, or a movie you already like.",
   intent: "greeting",
   showMovieCards: false,
+  signal: undefined,
   results: [],
 };
 
@@ -47,6 +49,7 @@ export function ChatDashboard() {
   const [error, setError] = useState("");
   const [theme, setTheme] = useState<"light" | "dark">("light");
   const [expandedResults, setExpandedResults] = useState<Record<string, boolean>>({});
+  const [expandedSignals, setExpandedSignals] = useState<Record<string, boolean>>({});
   const messagesEndRef = useRef<HTMLDivElement | null>(null);
   const typingText = useLoopingTypewriter(heroPhrases);
   const showStarterState = messages.length === 1;
@@ -118,6 +121,7 @@ export function ChatDashboard() {
       role: "user",
       content: trimmed,
       showMovieCards: false,
+      signal: undefined,
       results: [],
     };
 
@@ -154,6 +158,7 @@ export function ChatDashboard() {
         content: data.answer,
         intent: data.intent,
         showMovieCards: data.show_movie_cards ?? false,
+        signal: data.signal,
         results: data.results,
       };
 
@@ -183,12 +188,20 @@ export function ChatDashboard() {
     setSessionId(nextSession);
     setMessages([initialAssistantMessage]);
     setExpandedResults({});
+    setExpandedSignals({});
     setError("");
     setDraft("");
   };
 
   const toggleResults = (messageId: string) => {
     setExpandedResults((current) => ({
+      ...current,
+      [messageId]: !current[messageId],
+    }));
+  };
+
+  const toggleSignal = (messageId: string) => {
+    setExpandedSignals((current) => ({
       ...current,
       [messageId]: !current[messageId],
     }));
@@ -273,8 +286,17 @@ export function ChatDashboard() {
                   <span className="message-name">{message.role === "user" ? "You" : "moviemate"}</span>
 
                   <div className={`message-bubble ${message.role === "user" ? "message-bubble-user" : "message-bubble-assistant"}`}>
-                    <p className="message-copy">{message.content}</p>
+                    <MarkdownMessage content={message.content} />
                   </div>
+
+                  {message.signal ? (
+                    <SignalStrip
+                      expanded={Boolean(expandedSignals[message.id])}
+                      messageId={message.id}
+                      onToggle={toggleSignal}
+                      signal={message.signal}
+                    />
+                  ) : null}
 
                   {message.showMovieCards && message.results.length > 0 ? (
                     <div className="results-section">
@@ -405,6 +427,226 @@ function MovieCard({ movie }: { movie: MovieResult }) {
       <p className="movie-meta">{formatMeta(movie.year, movie.runtime_minutes)}</p>
       <p className="movie-genres">{movie.genres || "Genre not available"}</p>
     </article>
+  );
+}
+
+function MarkdownMessage({ content }: { content: string }) {
+  const blocks = parseMarkdownBlocks(content);
+
+  return (
+    <div className="message-markdown">
+      {blocks.map((block, index) => {
+        if (block.type === "ul") {
+          return (
+            <ul key={`ul-${index}`} className="message-list-block">
+              {block.items.map((item, itemIndex) => (
+                <li key={`ul-item-${index}-${itemIndex}`}>{renderInlineMarkdown(item)}</li>
+              ))}
+            </ul>
+          );
+        }
+
+        if (block.type === "ol") {
+          return (
+            <ol key={`ol-${index}`} className="message-list-block">
+              {block.items.map((item, itemIndex) => (
+                <li key={`ol-item-${index}-${itemIndex}`}>{renderInlineMarkdown(item)}</li>
+              ))}
+            </ol>
+          );
+        }
+
+        if (block.type === "heading") {
+          return (
+            <h3 key={`heading-${index}`} className="message-heading">
+              {renderInlineMarkdown(block.text)}
+            </h3>
+          );
+        }
+
+        return (
+          <p key={`p-${index}`} className="message-copy">
+            {renderInlineMarkdown(block.text)}
+          </p>
+        );
+      })}
+    </div>
+  );
+}
+
+function parseMarkdownBlocks(content: string) {
+  const lines = content.split(/\r?\n/);
+  const blocks: Array<
+    | { type: "paragraph"; text: string }
+    | { type: "heading"; text: string }
+    | { type: "ul"; items: string[] }
+    | { type: "ol"; items: string[] }
+  > = [];
+
+  let paragraph: string[] = [];
+  let listType: "ul" | "ol" | null = null;
+  let listItems: string[] = [];
+
+  const flushParagraph = () => {
+    if (!paragraph.length) {
+      return;
+    }
+    blocks.push({ type: "paragraph", text: paragraph.join(" ").trim() });
+    paragraph = [];
+  };
+
+  const flushList = () => {
+    if (!listType || !listItems.length) {
+      return;
+    }
+    blocks.push({ type: listType, items: listItems });
+    listType = null;
+    listItems = [];
+  };
+
+  for (const rawLine of lines) {
+    const line = rawLine.trim();
+
+    if (!line) {
+      flushParagraph();
+      flushList();
+      continue;
+    }
+
+    const headingMatch = line.match(/^#{1,3}\s+(.*)$/);
+    if (headingMatch) {
+      flushParagraph();
+      flushList();
+      blocks.push({ type: "heading", text: headingMatch[1].trim() });
+      continue;
+    }
+
+    const unorderedMatch = line.match(/^[-*]\s+(.*)$/);
+    if (unorderedMatch) {
+      flushParagraph();
+      if (listType && listType !== "ul") {
+        flushList();
+      }
+      listType = "ul";
+      listItems.push(unorderedMatch[1].trim());
+      continue;
+    }
+
+    const orderedMatch = line.match(/^\d+\.\s+(.*)$/);
+    if (orderedMatch) {
+      flushParagraph();
+      if (listType && listType !== "ol") {
+        flushList();
+      }
+      listType = "ol";
+      listItems.push(orderedMatch[1].trim());
+      continue;
+    }
+
+    flushList();
+    paragraph.push(line);
+  }
+
+  flushParagraph();
+  flushList();
+
+  return blocks.length ? blocks : [{ type: "paragraph", text: content }];
+}
+
+function renderInlineMarkdown(text: string) {
+  const segments: ReactNode[] = [];
+  const pattern = /(\*\*[^*]+\*\*|`[^`]+`)/g;
+  let lastIndex = 0;
+
+  for (const match of text.matchAll(pattern)) {
+    const matched = match[0];
+    const index = match.index ?? 0;
+
+    if (index > lastIndex) {
+      segments.push(text.slice(lastIndex, index));
+    }
+
+    if (matched.startsWith("**") && matched.endsWith("**")) {
+      segments.push(
+        <strong key={`${index}-strong`}>{matched.slice(2, -2)}</strong>,
+      );
+    } else if (matched.startsWith("`") && matched.endsWith("`")) {
+      segments.push(
+        <code key={`${index}-code`} className="message-code">
+          {matched.slice(1, -1)}
+        </code>,
+      );
+    }
+
+    lastIndex = index + matched.length;
+  }
+
+  if (lastIndex < text.length) {
+    segments.push(text.slice(lastIndex));
+  }
+
+  return segments.length ? segments : text;
+}
+
+function SignalStrip({
+  signal,
+  messageId,
+  expanded,
+  onToggle,
+}: {
+  signal: ChatSignal;
+  messageId: string;
+  expanded: boolean;
+  onToggle: (messageId: string) => void;
+}) {
+  return (
+    <div className="signal-strip">
+      <button
+        aria-expanded={expanded}
+        className="signal-toggle"
+        onClick={() => onToggle(messageId)}
+        type="button"
+      >
+        <div className="signal-bars" aria-hidden="true">
+          {signal.signals.map((metric) => (
+            <span key={metric.label} className={`signal-bar signal-bar-${metric.band}`} />
+          ))}
+        </div>
+
+        <span className="signal-label">signal {Math.round(signal.overall_score * 100)}</span>
+      </button>
+
+      {expanded ? <SignalDetails signal={signal} /> : null}
+    </div>
+  );
+}
+
+function SignalDetails({ signal }: { signal: ChatSignal }) {
+  return (
+    <div className="signal-panel">
+      <div className="signal-grid">
+        {signal.signals.map((metric) => (
+          <SignalMetricRow key={metric.label} metric={metric} />
+        ))}
+      </div>
+
+      <p className="signal-note">{signal.note}</p>
+
+      <div className="signal-meta">
+        <span>{signal.latency_ms} ms</span>
+        <span>{signal.details.result_count} evidences</span>
+        <span>{signal.details.llm_judge ? "judge on" : "judge off"}</span>
+      </div>
+    </div>
+  );
+}
+
+function SignalMetricRow({ metric }: { metric: SignalMetric }) {
+  return (
+    <div className="signal-metric">
+      <span>{metric.label}</span>
+      <strong>{Math.round(metric.score * 100)}</strong>
+    </div>
   );
 }
 

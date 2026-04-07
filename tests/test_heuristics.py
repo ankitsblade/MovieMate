@@ -1,12 +1,15 @@
 import unittest
 
 from app.rules.heuristics import (
+    answer_looks_complete,
+    build_card_mode_answer,
     extract_person_name,
     infer_clarify_prompt,
     is_memory_lookup_message,
     is_recent_clarify_prompt,
     is_short_followup_message,
     looks_like_clarify_response,
+    person_name_matches_text,
     replace_single_name_query,
     sanitize_answer,
     should_show_movie_cards,
@@ -70,6 +73,43 @@ class HeuristicsTests(unittest.TestCase):
     def test_sanitize_answer_removes_card_section(self):
         answer = "Here are some picks.\n\nCards:\n- No Time to Die\n- Blade Runner 2049"
         self.assertEqual(sanitize_answer(answer, True), "Here are some picks.")
+
+    def test_card_mode_answer_does_not_list_titles(self):
+        results = [
+            {
+                "primary_title": "Kung Fu Panda",
+                "runtime_minutes": 92,
+                "start_year": 2008,
+                "genres": "Animation,Comedy",
+            },
+            {
+                "primary_title": "Happy",
+                "runtime_minutes": 76,
+                "start_year": 2012,
+                "genres": "Documentary",
+            },
+        ]
+
+        answer = build_card_mode_answer("feel-good movies under two hours", results)
+
+        self.assertIn("feel-good mood", answer)
+        self.assertIn("You’ll find 2 options below.", answer)
+        self.assertNotIn("Kung Fu Panda", answer)
+        self.assertNotIn("Happy", answer)
+        self.assertNotIn("retrieved set", answer)
+        self.assertTrue(answer_looks_complete(answer))
+
+    def test_detect_incomplete_answer(self):
+        self.assertFalse(answer_looks_complete("This charming documentary follows"))
+        self.assertTrue(answer_looks_complete("This charming documentary follows a playful family."))
+
+    def test_person_name_matching_uses_word_boundaries(self):
+        self.assertTrue(
+            person_name_matches_text("Ana de Armas", "Cast: Ana de Armas, Daniel Craig"),
+        )
+        self.assertFalse(
+            person_name_matches_text("Ana de Armas", "A documentary about Panama and arms trafficking"),
+        )
 
 
 if __name__ == "__main__":

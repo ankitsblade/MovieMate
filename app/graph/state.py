@@ -27,7 +27,11 @@ class MovieState(TypedDict, total=False):
     memory_context: str
     retrieved_movies: list[dict]
     reranked_movies: list[dict]
+    card_movies: list[dict]
     show_movie_cards: bool
+    retry_count: int
+    retry_guidance: str
+    signal: dict
 
     answer: str
 

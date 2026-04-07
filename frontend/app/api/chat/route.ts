@@ -14,6 +14,7 @@ type BackendResult = {
   answer: string;
   intent: string;
   show_movie_cards?: boolean;
+  signal?: unknown;
   results: unknown[];
 };
 

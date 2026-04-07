@@ -1,7 +1,7 @@
 import psycopg
 from langsmith import traceable
 from app.config import SUPABASE_DB_URL
-from app.rules.heuristics import NAME_CONNECTORS
+from app.rules.heuristics import NAME_CONNECTORS, person_name_matches_text
 
 
 def get_connection():
@@ -24,23 +24,24 @@ def _build_person_match_clause(person_name: str) -> tuple[str, list[str]]:
 
     if significant_tokens:
         people_parts = []
-        content_parts = []
         people_params: list[str] = []
-        content_params: list[str] = []
 
         for token in significant_tokens:
             token_pattern = f"%{token}%"
             people_parts.append("coalesce(people_summary, '') ilike %s")
-            content_parts.append("coalesce(content, '') ilike %s")
             people_params.append(token_pattern)
-            content_params.append(token_pattern)
 
         clauses.append("(" + " and ".join(people_parts) + ")")
-        clauses.append("(" + " and ".join(content_parts) + ")")
         params.extend(people_params)
-        params.extend(content_params)
 
     return "(" + " or ".join(clauses) + ")", params
+
+
+def _passes_strict_person_match(movie: dict, person_name: str) -> bool:
+    return any(
+        person_name_matches_text(person_name, movie.get(field, ""))
+        for field in ("people_summary", "content")
+    )
 
 
 @traceable(run_type="retriever", name="supabase_vector_search")
@@ -86,34 +87,55 @@ def search_movies(
 
     where_clause = " and ".join(conditions)
 
-    sql = f"""
-    select
-        id,
-        tconst,
-        primary_title,
-        title_type,
-        start_year,
-        runtime_minutes,
-        genres,
-        average_rating,
-        num_votes,
-        people_summary,
-        content,
-        embedding <#> %s::vector as distance
-    from public.movies
-    where {where_clause}
-    order by embedding <#> %s::vector
-    limit %s;
-    """
-
-    final_params = [emb_str, *params, emb_str, top_k]
+    if person_name is not None:
+        sql = f"""
+        select
+            id,
+            tconst,
+            primary_title,
+            title_type,
+            start_year,
+            runtime_minutes,
+            genres,
+            average_rating,
+            num_votes,
+            people_summary,
+            content,
+            embedding <#> %s::vector as distance
+        from public.movies
+        where {where_clause}
+        order by average_rating desc nulls last, num_votes desc nulls last, start_year desc nulls last
+        limit %s;
+        """
+        final_params = [emb_str, *params, top_k]
+    else:
+        sql = f"""
+        select
+            id,
+            tconst,
+            primary_title,
+            title_type,
+            start_year,
+            runtime_minutes,
+            genres,
+            average_rating,
+            num_votes,
+            people_summary,
+            content,
+            embedding <#> %s::vector as distance
+        from public.movies
+        where {where_clause}
+        order by embedding <#> %s::vector
+        limit %s;
+        """
+        final_params = [emb_str, *params, emb_str, top_k]
 
     with get_connection() as conn:
         with conn.cursor() as cur:
             cur.execute(sql, final_params)
             rows = cur.fetchall()
 
-    return [
+    results = [
         {
             "id": row[0],
             "tconst": row[1],
@@ -130,3 +152,12 @@ def search_movies(
         }
         for row in rows
     ]
+
+    if person_name is not None:
+        results = [
+            movie
+            for movie in results
+            if _passes_strict_person_match(movie, person_name)
+        ]
+
+    return results

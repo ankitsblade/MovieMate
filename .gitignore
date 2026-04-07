@@ -19,3 +19,8 @@ frontend/.env.local
 *.tsv.gz
 *.csv
 .~lock.imdb_cleaned_for_supabase.csv#
+
+# Typst artifacts
+report/*.pdf
+report/build/
+report/.typst/

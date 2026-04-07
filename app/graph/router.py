@@ -112,10 +112,6 @@ def classify_intent(
     user_message: str,
     messages: list[Any] | None = None,
 ) -> tuple[str, str | None]:
-    heuristic_result = _heuristic_route(user_message, messages)
-    if heuristic_result:
-        return heuristic_result
-
     history = _format_history(_strip_current_message(messages, user_message))
     prompt = ROUTER_PROMPT.format(
         history=history or "None",
@@ -130,6 +126,9 @@ def classify_intent(
             ]
         )
     except Exception:
+        heuristic_result = _heuristic_route(user_message, messages)
+        if heuristic_result:
+            return heuristic_result
         clarify_prompt = infer_clarify_prompt(
             user_message=user_message,
             has_prior_context=bool(_strip_current_message(messages, user_message)),
@@ -145,5 +144,8 @@ def classify_intent(
         )
         if clarify_prompt:
             return result.intent, clarify_prompt
+        heuristic_result = _heuristic_route(user_message, messages)
+        if heuristic_result:
+            return heuristic_result
 
     return result.intent, None

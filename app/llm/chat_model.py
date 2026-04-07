@@ -5,6 +5,6 @@ llm = ChatOpenAI(
     model=NVIDIA_CHAT_MODEL,
     api_key=NVIDIA_API_KEY,
     base_url=NVIDIA_BASE_URL,
-    temperature=0.4,
-    max_tokens=700,
+    temperature=0.2,
+    max_tokens=900,
 )

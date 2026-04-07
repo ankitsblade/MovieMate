@@ -3,9 +3,15 @@ import re
 from langchain_core.messages import HumanMessage, AIMessage
 from langsmith import traceable
 
-from app.config import TOP_K_RETRIEVE, TOP_K_FINAL
+from app.config import (
+    LOW_SIGNAL_MAX_RETRIES,
+    LOW_SIGNAL_RETRY_THRESHOLD,
+    TOP_K_FINAL,
+    TOP_K_RETRIEVE,
+)
+from app.evals.service import evaluate_turn
 from app.graph.state import MovieState
-from app.graph.router import classify_intent, infer_clarify_prompt
+from app.graph.router import classify_intent
 from app.llm.chat_model import llm
 from app.llm.prompts import SYSTEM_PROMPT, QUERY_REWRITE_PROMPT, ANSWER_PROMPT
 from app.llm.embeddings import get_query_embedding
@@ -14,7 +20,10 @@ from app.retrieval.retriever import search_movies
 from app.retrieval.reranker import rerank_movies
 from app.retrieval.formatter import format_context
 from app.rules.heuristics import (
+    answer_looks_complete,
+    build_card_mode_answer,
     is_preference_statement,
+    infer_clarify_prompt,
     replace_single_name_query,
     sanitize_answer,
     should_show_movie_cards,
@@ -91,6 +100,24 @@ def _recent_human_texts(messages: list, limit: int = 3) -> list[str]:
     return human_messages[-limit:]
 
 
+def _allowed_titles(results: list[dict]) -> str:
+    titles = [
+        str(movie.get("primary_title") or "").strip()
+        for movie in results
+        if str(movie.get("primary_title") or "").strip()
+    ]
+    unique_titles: list[str] = []
+    seen: set[str] = set()
+    for title in titles:
+        lowered = title.lower()
+        if lowered in seen:
+            continue
+        seen.add(lowered)
+        unique_titles.append(title)
+
+    return ", ".join(unique_titles) if unique_titles else "None"
+
+
 def _rewrite_clarify_followup(messages: list, user_message: str) -> str | None:
     person_name = extract_person_name(user_message)
     if not person_name:
@@ -111,35 +138,48 @@ def router_node(state: MovieState) -> MovieState:
         state.get("messages", []),
     )
 
+    base_state = {
+        "needs_memory": False,
+        "needs_retrieval": False,
+        "clarify_prompt": "",
+        "rewritten_query": "",
+        "filters": {},
+        "memory_context": "",
+        "retrieved_movies": [],
+        "reranked_movies": [],
+        "card_movies": [],
+        "show_movie_cards": False,
+        "retry_count": 0,
+        "retry_guidance": "",
+        "signal": {},
+        "answer": "",
+    }
+
     if intent in {"movie_query", "followup"}:
         return {
+            **base_state,
             "intent": intent,
             "needs_memory": should_use_memory(state["user_message"], intent),
             "needs_retrieval": True,
-            "clarify_prompt": "",
         }
 
     if intent == "memory_lookup":
         return {
+            **base_state,
             "intent": intent,
             "needs_memory": True,
-            "needs_retrieval": False,
-            "clarify_prompt": "",
         }
 
     if intent == "clarify":
         return {
+            **base_state,
             "intent": intent,
-            "needs_memory": False,
-            "needs_retrieval": False,
             "clarify_prompt": clarify_prompt or "",
         }
 
     return {
+        **base_state,
         "intent": intent,
-        "needs_memory": False,
-        "needs_retrieval": False,
-        "clarify_prompt": "",
     }
 
 
@@ -164,8 +204,8 @@ def small_talk_node(state: MovieState) -> MovieState:
 
 def clarify_node(state: MovieState) -> MovieState:
     answer = state.get("clarify_prompt") or infer_clarify_prompt(
-        state["user_message"],
-        state.get("messages", []),
+        user_message=state["user_message"],
+        has_prior_context=bool(_get_prior_messages(state)),
     ) or (
         "What should I narrow by for you: genre, mood, actor, director, runtime, or a movie you want something similar to?"
     )
@@ -270,10 +310,14 @@ def rewrite_node(state: MovieState) -> MovieState:
 @traceable(run_type="chain", name="retrieve_candidates")
 def retrieve_node(state: MovieState) -> MovieState:
     if not state.get("needs_retrieval", False):
-        return {"filters": {}, "retrieved_movies": []}
+        return {"filters": {}, "retrieved_movies": [], "card_movies": [], "retry_count": 0, "retry_guidance": ""}
 
     query = state.get("rewritten_query") or state["user_message"]
     filters = extract_filters(query)
+    user_filters = extract_filters(state["user_message"])
+
+    if not filters.get("person_name") and user_filters.get("person_name"):
+        filters["person_name"] = user_filters["person_name"]
     query_embedding = get_query_embedding(query)
     top_k = TOP_K_FINAL if filters.get("person_name") else TOP_K_RETRIEVE
 
@@ -291,6 +335,9 @@ def retrieve_node(state: MovieState) -> MovieState:
     return {
         "filters": filters,
         "retrieved_movies": results,
+        "card_movies": results[:TOP_K_FINAL],
+        "retry_count": state.get("retry_count", 0),
+        "retry_guidance": state.get("retry_guidance", ""),
     }
 
 
@@ -298,10 +345,13 @@ def retrieve_node(state: MovieState) -> MovieState:
 def rerank_node(state: MovieState) -> MovieState:
     candidates = state.get("retrieved_movies", [])
     if not candidates:
-        return {"reranked_movies": [], "show_movie_cards": False}
+        return {"reranked_movies": [], "card_movies": [], "show_movie_cards": False}
 
     if state.get("filters", {}).get("person_name"):
-        return {"reranked_movies": candidates[:TOP_K_FINAL]}
+        return {
+            "reranked_movies": candidates[:TOP_K_FINAL],
+            "card_movies": candidates[:TOP_K_FINAL],
+        }
 
     query = state.get("rewritten_query") or state["user_message"]
     final_results = rerank_movies(
@@ -309,39 +359,118 @@ def rerank_node(state: MovieState) -> MovieState:
         candidates=candidates,
         top_n=TOP_K_FINAL,
     )
-    return {"reranked_movies": final_results}
+    return {
+        "reranked_movies": final_results,
+        "card_movies": final_results,
+    }
 
 
 @traceable(run_type="chain", name="generate_answer")
 def answer_node(state: MovieState) -> MovieState:
-    context = format_context(state.get("reranked_movies", []))
+    answer_results = state.get("reranked_movies", [])
+    context = format_context(answer_results)
     memory_context = state.get("memory_context", "")
     history_text = _format_history(_get_prior_messages(state), max_messages=4)
     show_movie_cards = should_show_movie_cards(
         user_message=state["user_message"],
         intent=state["intent"],
-        has_results=bool(state.get("reranked_movies", [])),
+        has_results=bool(state.get("card_movies", [])),
     )
+    retry_guidance = state.get("retry_guidance", "")
 
     prompt = ANSWER_PROMPT.format(
         history=history_text,
         memory_context=memory_context or "None",
         user_message=state["user_message"],
         context=context,
+        allowed_titles=_allowed_titles(answer_results),
         response_mode="cards" if show_movie_cards else "text",
+        retry_guidance=retry_guidance or "None",
     )
 
-    answer = llm.invoke(
-        [
-            ("system", SYSTEM_PROMPT),
-            ("user", prompt),
-        ]
-    ).content.strip()
-    answer = sanitize_answer(answer, show_movie_cards)
+    if show_movie_cards:
+        answer = build_card_mode_answer(
+            user_message=state["user_message"],
+            results=state.get("card_movies", []),
+        )
+    else:
+        answer = llm.invoke(
+            [
+                ("system", SYSTEM_PROMPT),
+                ("user", prompt),
+            ]
+        ).content.strip()
+        answer = sanitize_answer(answer, show_movie_cards)
+
+        if not answer_looks_complete(answer):
+            retry_prompt = ANSWER_PROMPT.format(
+                history=history_text,
+                memory_context=memory_context or "None",
+                user_message=state["user_message"],
+                context=context,
+                allowed_titles=_allowed_titles(answer_results),
+                response_mode="text",
+                retry_guidance=(
+                    "Previous draft was cut off or incomplete. Regenerate a complete, grounded answer that ends cleanly."
+                ),
+            )
+            answer = llm.invoke(
+                [
+                    ("system", SYSTEM_PROMPT),
+                    ("user", retry_prompt),
+                ]
+            ).content.strip()
+            answer = sanitize_answer(answer, show_movie_cards)
 
     return {
         "answer": answer,
         "show_movie_cards": show_movie_cards,
+    }
+
+
+@traceable(run_type="chain", name="evaluate_answer")
+def evaluate_answer_node(state: MovieState) -> MovieState:
+    signal = evaluate_turn(
+        user_message=state["user_message"],
+        intent=state.get("intent", ""),
+        answer=state.get("answer", ""),
+        filters=state.get("filters", {}),
+        reranked_movies=state.get("reranked_movies", []),
+        memory_context=state.get("memory_context", ""),
+        show_movie_cards=state.get("show_movie_cards", False),
+        latency_ms=0,
+    )
+    return {"signal": signal}
+
+
+def should_retry_answer(state: MovieState) -> bool:
+    if state.get("intent") not in {"movie_query", "followup"}:
+        return False
+
+    signal = state.get("signal") or {}
+    score = float(signal.get("overall_score", 1.0))
+    retry_count = int(state.get("retry_count", 0))
+
+    return score < LOW_SIGNAL_RETRY_THRESHOLD and retry_count < LOW_SIGNAL_MAX_RETRIES
+
+
+def prepare_retry_node(state: MovieState) -> MovieState:
+    signal = state.get("signal") or {}
+    note = str(signal.get("note") or "").strip()
+    guidance = (
+        f"Previous draft was too weak. Fix this issue: {note}"
+        if note
+        else "Previous draft was too weak. Regenerate a more grounded answer using only the retrieved evidence."
+    )
+    return {
+        "retry_count": int(state.get("retry_count", 0)) + 1,
+        "retry_guidance": guidance,
+    }
+
+
+def finalize_answer_node(state: MovieState) -> MovieState:
+    answer = state.get("answer", "").strip()
+    return {
         "messages": [AIMessage(content=answer)],
     }
 

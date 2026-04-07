@@ -37,6 +37,32 @@ Latest user message:
 {user_message}
 """
 
+RETRIEVAL_PARSE_PROMPT = """
+Convert the movie request into structured retrieval filters.
+
+User query:
+{query}
+
+Extract these fields:
+- rewritten_query: a concise retrieval query preserving the user's intent
+- person_name: full actor or director name only when clearly specified, otherwise null
+- genre: a single dominant genre if explicit, otherwise null
+- min_year: inclusive lower bound year if present, otherwise null
+- max_year: inclusive upper bound year if present, otherwise null
+- max_runtime: maximum runtime in minutes if present, otherwise null
+- min_rating: minimum rating if present, otherwise null
+
+Rules:
+- Prefer null over guessing.
+- Do not infer a person from only a first name.
+- Keep rewritten_query faithful to the user's request.
+- "after 2015" means min_year = 2016.
+- "before 2010" means max_year = 2009.
+- "under 2 hours" means max_runtime = 120.
+- "under 90 minutes" means max_runtime = 90.
+- "rated above 7.5" means min_rating = 7.5.
+"""
+
 ANSWER_PROMPT = """
 Conversation history:
 {history}
@@ -50,11 +76,20 @@ User message:
 Retrieved movie context:
 {context}
 
+Allowed movie titles:
+{allowed_titles}
+
 Response mode:
 {response_mode}
 
+Retry guidance:
+{retry_guidance}
+
 Instructions:
 - Answer naturally and concisely.
+- Format the answer as clean markdown.
+- Use short paragraphs.
+- Use markdown bullet lists only when they genuinely improve readability.
 - Use retrieved movie context for movie facts.
 - Use memory context for user-specific preferences or prior-conversation references.
 - Use memory context only when it is directly relevant to the current user message.
@@ -62,10 +97,13 @@ Instructions:
 - If memory context is empty, ignore it.
 - If retrieved movie context is empty, do not invent movie facts.
 - Do not hallucinate anything not supported by the provided context.
+- Only mention movie titles that appear in Allowed movie titles.
+- If Allowed movie titles is None, do not mention specific movie titles as if they were retrieved.
 - If response mode is cards, do not output a bulleted or numbered list of the recommended movie titles.
-- If response mode is cards, give a short lead-in plus a brief summary of why the retrieved set fits, because the UI will show the cards separately.
+- If response mode is cards, give a short markdown lead-in plus a brief summary of why the retrieved set fits, because the UI will show the cards separately.
 - If response mode is cards, never mention the words "cards", "movie cards", "JSON", or any frontend/UI formatting.
 - If response mode is text, you may list titles in the answer when it helps.
+- If retry guidance is present, treat it as a strict correction request and fix the prior weakness.
 """
 
 ROUTER_PROMPT = """

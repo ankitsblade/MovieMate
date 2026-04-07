@@ -11,6 +11,10 @@ from app.graph.nodes import (
     retrieve_node,
     rerank_node,
     answer_node,
+    evaluate_answer_node,
+    prepare_retry_node,
+    finalize_answer_node,
+    should_retry_answer,
 )
 from app.memory.history import checkpointer
 
@@ -40,6 +44,9 @@ builder.add_node("rewrite", rewrite_node)
 builder.add_node("retrieve", retrieve_node)
 builder.add_node("rerank", rerank_node)
 builder.add_node("answer", answer_node)
+builder.add_node("evaluate_answer", evaluate_answer_node)
+builder.add_node("prepare_retry", prepare_retry_node)
+builder.add_node("finalize_answer", finalize_answer_node)
 
 builder.add_edge(START, "router")
 
@@ -58,11 +65,22 @@ builder.add_edge("memory_retrieval", "rewrite")
 builder.add_edge("rewrite", "retrieve")
 builder.add_edge("retrieve", "rerank")
 builder.add_edge("rerank", "answer")
+builder.add_edge("answer", "evaluate_answer")
+
+builder.add_conditional_edges(
+    "evaluate_answer",
+    lambda state: "retry" if should_retry_answer(state) else "finalize",
+    {
+        "retry": "prepare_retry",
+        "finalize": "finalize_answer",
+    },
+)
+builder.add_edge("prepare_retry", "answer")
 
 builder.add_edge("greeting", END)
 builder.add_edge("small_talk", END)
 builder.add_edge("clarify", END)
-builder.add_edge("answer", END)
+builder.add_edge("finalize_answer", END)
 
 graph = builder.compile(checkpointer=checkpointer)
 
