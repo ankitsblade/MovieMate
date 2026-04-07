@@ -52,7 +52,7 @@ def rerank_movies(query: str, candidates: list[dict], top_n: int = 6) -> list[di
             NVIDIA_RERANK_URL,
             headers=headers,
             json=payload,
-            timeout=60,
+            timeout=12,
         )
         response.raise_for_status()
         data = response.json()

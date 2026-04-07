@@ -19,6 +19,7 @@ class MovieState(TypedDict, total=False):
 
     needs_memory: bool
     needs_retrieval: bool
+    clarify_prompt: str
 
     rewritten_query: str
     filters: dict
@@ -26,6 +27,7 @@ class MovieState(TypedDict, total=False):
     memory_context: str
     retrieved_movies: list[dict]
     reranked_movies: list[dict]
+    show_movie_cards: bool
 
     answer: str
 

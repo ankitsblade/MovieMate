@@ -13,6 +13,7 @@ const API_URLS = [
 type BackendResult = {
   answer: string;
   intent: string;
+  show_movie_cards?: boolean;
   results: unknown[];
 };
 

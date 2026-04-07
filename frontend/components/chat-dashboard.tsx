@@ -35,6 +35,7 @@ const initialAssistantMessage: Message = {
   content:
     "Hi, I'm moviemate. Ask for recommendations by mood, genre, actor, runtime, or a movie you already like.",
   intent: "greeting",
+  showMovieCards: false,
   results: [],
 };
 
@@ -116,6 +117,7 @@ export function ChatDashboard() {
       id: createId(),
       role: "user",
       content: trimmed,
+      showMovieCards: false,
       results: [],
     };
 
@@ -151,6 +153,7 @@ export function ChatDashboard() {
         role: "assistant",
         content: data.answer,
         intent: data.intent,
+        showMovieCards: data.show_movie_cards ?? false,
         results: data.results,
       };
 
@@ -273,7 +276,7 @@ export function ChatDashboard() {
                     <p className="message-copy">{message.content}</p>
                   </div>
 
-                  {message.results.length > 0 ? (
+                  {message.showMovieCards && message.results.length > 0 ? (
                     <div className="results-section">
                       <button
                         className="results-toggle"

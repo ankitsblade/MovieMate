@@ -1,5 +1,7 @@
 import re
 
+from app.rules.heuristics import extract_genre, extract_person_name
+
 
 def extract_filters(query: str) -> dict:
     q = query.lower()
@@ -9,7 +11,8 @@ def extract_filters(query: str) -> dict:
         "max_year": None,
         "max_runtime": None,
         "min_rating": None,
-        "genre": None,
+        "genre": extract_genre(query),
+        "person_name": extract_person_name(query),
     }
 
     after_year = re.search(r"after\s+(\d{4})", q)
@@ -31,16 +34,5 @@ def extract_filters(query: str) -> dict:
     rating_match = re.search(r"(rated above|rating above|above)\s+(\d+(\.\d+)?)", q)
     if rating_match:
         filters["min_rating"] = float(rating_match.group(2))
-
-    common_genres = [
-        "action", "comedy", "drama", "thriller", "romance",
-        "sci-fi", "science fiction", "horror", "crime",
-        "adventure", "animation", "fantasy", "mystery", "western"
-    ]
-
-    for genre in common_genres:
-        if genre in q:
-            filters["genre"] = genre
-            break
 
     return filters

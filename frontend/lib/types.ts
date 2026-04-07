@@ -11,6 +11,7 @@ export type MovieResult = {
 export type ChatResponse = {
   answer: string;
   intent: string;
+  show_movie_cards?: boolean;
   results: MovieResult[];
 };
 
@@ -19,5 +20,6 @@ export type Message = {
   role: "user" | "assistant";
   content: string;
   intent?: string;
+  showMovieCards?: boolean;
   results: MovieResult[];
 };

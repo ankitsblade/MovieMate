@@ -1,10 +1,46 @@
 import psycopg
 from langsmith import traceable
 from app.config import SUPABASE_DB_URL
+from app.rules.heuristics import NAME_CONNECTORS
 
 
 def get_connection():
     return psycopg.connect(SUPABASE_DB_URL)
+
+
+def _build_person_match_clause(person_name: str) -> tuple[str, list[str]]:
+    phrase_pattern = f"%{person_name}%"
+    clauses = [
+        "coalesce(people_summary, '') ilike %s",
+        "coalesce(content, '') ilike %s",
+    ]
+    params: list[str] = [phrase_pattern, phrase_pattern]
+
+    significant_tokens = [
+        token
+        for token in person_name.split()
+        if token.lower() not in NAME_CONNECTORS and len(token) > 1
+    ]
+
+    if significant_tokens:
+        people_parts = []
+        content_parts = []
+        people_params: list[str] = []
+        content_params: list[str] = []
+
+        for token in significant_tokens:
+            token_pattern = f"%{token}%"
+            people_parts.append("coalesce(people_summary, '') ilike %s")
+            content_parts.append("coalesce(content, '') ilike %s")
+            people_params.append(token_pattern)
+            content_params.append(token_pattern)
+
+        clauses.append("(" + " and ".join(people_parts) + ")")
+        clauses.append("(" + " and ".join(content_parts) + ")")
+        params.extend(people_params)
+        params.extend(content_params)
+
+    return "(" + " or ".join(clauses) + ")", params
 
 
 @traceable(run_type="retriever", name="supabase_vector_search")
@@ -16,6 +52,7 @@ def search_movies(
     max_runtime: int | None = None,
     min_rating: float | None = None,
     genre: str | None = None,
+    person_name: str | None = None,
 ) -> list[dict]:
     emb_str = "[" + ",".join(map(str, query_embedding)) + "]"
 
@@ -41,6 +78,11 @@ def search_movies(
     if genre is not None:
         conditions.append("genres ilike %s")
         params.append(f"%{genre}%")
+
+    if person_name is not None:
+        person_clause, person_params = _build_person_match_clause(person_name)
+        conditions.append(person_clause)
+        params.extend(person_params)
 
     where_clause = " and ".join(conditions)
 

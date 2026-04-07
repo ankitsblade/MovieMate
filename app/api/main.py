@@ -35,6 +35,7 @@ def chat_endpoint(payload: ChatRequest):
     return {
         "answer": result.get("answer", ""),
         "intent": result.get("intent", ""),
+        "show_movie_cards": result.get("show_movie_cards", False),
         "results": [
             {
                 "tconst": r["tconst"],
@@ -46,5 +47,5 @@ def chat_endpoint(payload: ChatRequest):
                 "rerank_score": r.get("rerank_score"),
             }
             for r in result.get("reranked_movies", [])
-        ],
+        ] if result.get("show_movie_cards", False) else [],
     }
