@@ -4,6 +4,13 @@ MovieMate is a stateful retrieval-augmented movie chatbot built for an NLP cours
 
 The project is centered on the NLP pipeline rather than the UI. The frontend is only a thin usability layer over the backend API.
 
+
+## Report
+
+The project report lives at:
+
+- [`report/project_report.pdf`](/home/ankit/Development/MovieMate/report/project_report.pdf)
+
 ## What The System Does
 
 - accepts natural-language movie queries such as actor, genre, runtime, year, and follow-up refinements
@@ -276,12 +283,5 @@ This hybrid design was chosen because purely heuristic evaluation was too brittl
 ```bash
 UV_CACHE_DIR=/tmp/uv-cache uv run python -m unittest discover -s tests
 ```
-
-## Report
-
-The assignment-style Typst report lives at:
-
-- [`report/project_report.typ`](/home/ankit/Development/MovieMate/report/project_report.typ)
-- [`report/project_report.pdf`](/home/ankit/Development/MovieMate/report/project_report.pdf)
 
 Compiled Typst artifacts are ignored in Git via `.gitignore`.
